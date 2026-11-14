@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/nx3dx-project-edition.png" alt="NX3DX+ PROJECT EDITION" width="680">
+<img width="680" alt="image" src="https://github.com/user-attachments/assets/01fb6a63-58f1-4be5-b3d2-59d5d013e417" />
 
 # NX3DX+ Linux
 

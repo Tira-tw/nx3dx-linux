@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="1254" height="1254" alt="image" src="https://github.com/user-attachments/assets/01fb6a63-58f1-4be5-b3d2-59d5d013e417" />
+<img width="680" alt="image" src="https://github.com/user-attachments/assets/01fb6a63-58f1-4be5-b3d2-59d5d013e417" />
 
 # NX3DX+ Linux
 

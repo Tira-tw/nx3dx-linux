@@ -1,0 +1,33 @@
+name: Build Linux v2.4.1
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libsdl2-dev libgles2-mesa-dev libegl1-mesa-dev zlib1g-dev ffmpeg zenity
+      - name: Linux source and build
+        run: |
+          bash linux/build_linux.sh --check
+          bash linux/build_linux.sh
+      - name: Package Linux binary
+        run: |
+          bash linux/package_release.sh
+          cd build/release
+          sha256sum -c NX3DX-Linux-v2.4.1-x86_64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nx3dx-linux-v2.4.1-x86_64
+          path: |
+            build/release/NX3DX-Linux-v2.4.1-x86_64.tar.gz
+            build/release/NX3DX-Linux-v2.4.1-x86_64.tar.gz.sha256

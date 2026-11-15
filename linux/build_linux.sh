@@ -67,7 +67,7 @@ SOURCES=(
   src/app.c src/render.c src/hud.c src/car.c src/collide.c
   src/sound.c src/anm.c src/menu.c src/lights.c src/spark.c
   src/net.c src/vs_host.c src/ghostx.c src/title.c src/target.c
-  src/pad.c src/gk.c src/relays.c
+  src/pad.c src/gk.c src/relays.c src/vroom.c
   linux/main_linux.c linux/bgm_linux.c linux/file_picker.c
 )
 for src in "${SOURCES[@]}"; do

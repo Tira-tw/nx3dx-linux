@@ -111,6 +111,12 @@ bash linux/package_release.sh
 
 Outputs under 'build/release/' include the x86_64 binary package and its SHA256 checksum. **No copyrighted game assets or save files are included.**
 
+## 🌐 Online versus: rooms by game version
+
+Players of different game versions cannot race each other, so online rooms are kept apart by version. Every room in the ROOM LIST shows its version; rooms of another version are greyed out and LOCKED. The ALL VERSIONS button next to REFRESH switches the list to this version's rooms only. CREATE ROOM asks for the room's game version first: this app is **2.4.1 (Linux/macOS)**, the other versions (1.7 NX3DX+, 2.3, 2.4) are shown for reference. QUICK MATCH only joins rooms of your version.
+
+Unit tests (no game data needed): `bash test/run_tests.sh`
+
 ## 🎮 Steam Deck
 
 Enter your Ubuntu Distrobox first, then run the build or launch commands above. If your prompt already indicates the Distrobox, do not enter it again.

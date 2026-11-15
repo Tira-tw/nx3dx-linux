@@ -519,6 +519,11 @@ typedef struct {
     int rl_in, rl_ask, rl_ping, rl_n;
     char rl_relay[24], rl_room[MENU_RL_ROOMS][24];
     int rl_players[MENU_RL_ROOMS], rl_max[MENU_RL_ROOMS], rl_racing[MENU_RL_ROOMS], rl_rtt[MENU_RL_ROOMS];
+    /* rooms by game version (vroom.h): each row's room version (the app's, "" unknown) and lock
+     * (another version's: not joinable); rl_only_own the screen's filter (0 ALL VERSIONS, 1 this
+     * version's only); rl_pick the CREATE ROOM version pop-up up (the screen's) */
+    char rl_ver[MENU_RL_ROOMS][16];
+    int rl_lock[MENU_RL_ROOMS], rl_only_own, rl_pick;
     /* (v2.4, shared by the VS SETTINGS screen and the helpers; the host's choices travel to the
      * room) online: 0 LAN / Bluetooth (v2.3's protocol), 1 the online relays (the friend's
      * nova-net relays, their protocol); relay: the chosen relay (0..); mode: the race rule,

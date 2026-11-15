@@ -108,6 +108,12 @@ bash linux/package_release.sh
 
 輸出位於 'build/release/'，包含 x86_64 執行檔、啟動器及 SHA256 驗證檔，**不會包含遊戲資料**。
 
+## 🌐 線上對戰：依遊戲版本分房
+
+不同版本的遊戲無法一起對戰，所以線上房間會依版本分開。ROOM LIST 的每個房間都會顯示版本；其他版本的房間會變灰並顯示 LOCKED。REFRESH 旁的 ALL VERSIONS 按鈕可以切換成只顯示本版本的房間。按 CREATE ROOM 會先選擇房間的遊戲版本：本程式為 **2.4.1（Linux/macOS）**，其他版本（1.7 NX3DX+、2.3、2.4）僅供參考。QUICK MATCH 只會加入相同版本的房間。
+
+單元測試（不需要遊戲資料）：`bash test/run_tests.sh`
+
 ## 🎮 Steam Deck
 
 先進入 Ubuntu Distrobox，再執行以上安裝、編譯或啟動指令；已經在 Distrobox 時不用重複進入。支援觸控方向盤與油門同時操作。

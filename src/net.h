@@ -101,6 +101,7 @@ typedef struct {
   int has_ext, vs_build, app_build, platform; /* the ROOMS' 'X' '1' trailer (has_ext 0: none) */
   char host[NET_NAME + 1];
   int host_rtt; /* the 'Q' '1' trailer: ms, -1 unknown */
+  char version[16]; /* the 'V' '1' trailer: the room's game version ("" unknown or open to all, vroom.h) */
 } net_room;
 /* host: a dotted IPv4 or a name (resolved here, once); 0 ok */
 int net_relay_open(const char *host, int port, const char *name, const unsigned char *profile, int plen);
@@ -109,9 +110,16 @@ void net_relay_auto(void);
 void net_relay_list(void);
 int net_relay_rooms(net_room *out, int max); /* the last ROOMS' rooms (their count) */
 void net_relay_join(unsigned id);
-void net_relay_create(const char *name);
+void net_relay_create(const char *name); /* (a room of this app's version, vroom.h VROOM_OWN) */
 const char *net_relay_refused(void); /* the relay's REFUSED message, NULL none */
 int net_relay_rtt_ms(void);          /* the last PING's round trip, -1 none yet */
+/* the relay's REFUSED reason (1 too old, 2 another version's room), 0 none */
+int net_relay_refused_reason(void);
+/* (for the unit tests, test/) a relay HELLO's bytes into h (cap bytes): its length, -1 too small */
+int net_relay_hello_encode(unsigned char *h, int cap, uint32_t id, int status, const char *name, const unsigned char *profile, int pl);
+/* (for the unit tests) a ROOMS' body (after the 4-byte head) into out (at most max): the count,
+ * -1 a cut room record (nothing taken) */
+int net_relay_rooms_parse(const unsigned char *p, int n, net_room *out, int max);
 
 /* The ghosts' exchange (v2.1, ghostx.c): GHOST datagrams, the host (vs_host.c, vs_server.py)
  * passing each on to the player its u32 `to` names (0: everyone else). body: u32 from, u32 to,

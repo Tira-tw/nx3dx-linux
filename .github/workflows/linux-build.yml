@@ -16,6 +16,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libsdl2-dev libgles2-mesa-dev libegl1-mesa-dev zlib1g-dev ffmpeg zenity
+      - name: Unit tests
+        run: bash test/run_tests.sh
       - name: Linux source and build
         run: |
           bash linux/build_linux.sh --check

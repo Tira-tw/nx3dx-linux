@@ -17,6 +17,7 @@
 
 #include "car.h"
 #include "gk.h"
+#include "vroom.h"
 
 enum { HELLO = 1, LOBBY, START, GO, RACE, BYE, DISCOVER, OFFER, CLOSED, GHOST, ROOM, KICK, REFUSED }; /* (v2.3: ROOM..) */
 /* (v2.4) a relay's own numbering (vs_server 3), read and sent only while N.relay */
@@ -69,6 +70,7 @@ static struct {
   net_room rooms[NET_ROOMS_MAX];
   int nrooms;
   char refused_msg[49];
+  int refused_reason;
   uint32_t ping_nonce;
   double ping_sent;
   int rtt_ms;
@@ -185,6 +187,7 @@ static int read_player(const unsigned char *p, int len, net_player *pl, int with
 }
 
 static int relay_got(const unsigned char *b, int len, double now); /* (v2.4) */
+static int hello_encode(unsigned char *h, int cap, uint32_t id, int status, const char *name, const unsigned char *profile, int pl, int relay);
 static void relay_send_pending(void);
 
 static void got(const unsigned char *b, int len, double now) {
@@ -300,16 +303,26 @@ void net_poll(double now, int status, const char *name, const unsigned char *pro
   if (now - N.last_hello < HELLO_EVERY && status == N.last_status) return;
   N.last_hello = now;
   N.last_status = status;
-  unsigned char h[4 + 4 + 1 + NET_NAME + 1 + NET_PROFILE + 16];
+  unsigned char h[4 + 4 + 1 + NET_NAME + 1 + NET_PROFILE + 16 + 2 + VROOM_LABEL_MAX];
+  int at = hello_encode(h, sizeof h, N.id, status, name, profile, pl, N.relay);
+  if (at > 0) tx(h, at);
+}
+
+/* HELLO: u32 id, u8 status, char name[16], u8 n, profile[n]; a relay's adds the app key, 'X' '1'
+ * u8 platform u32 app_build u8 vs_build u8 tlen 0, 'N' proto and 'V' u8 len the game version */
+static int hello_encode(unsigned char *h, int cap, uint32_t id, int status, const char *name, const unsigned char *profile, int pl, int relay) {
+  int vl = (int)strlen(VROOM_OWN);
+  pl = pl < 0 ? 0 : pl > NET_PROFILE ? NET_PROFILE : pl;
+  if (cap < 10 + NET_NAME + pl + (relay ? 4 + 9 + 2 + 2 + vl : 0)) return -1;
   head(h, HELLO);
-  put32(h + 4, N.id);
+  put32(h + 4, id);
   h[8] = (unsigned char)status;
   memset(h + 9, 0, NET_NAME);
   if (name) memcpy(h + 9, name, strlen(name) < NET_NAME ? strlen(name) : NET_NAME);
   h[9 + NET_NAME] = (unsigned char)pl;
   if (pl) memcpy(h + 10 + NET_NAME, profile, (size_t)pl);
   int at = 10 + NET_NAME + pl;
-  if (N.relay) { /* (v2.4) app key, 'X' '1' u8 platform u32 app_build u8 vs_build u8 tlen 0, 'N' 4 */
+  if (relay) { /* (v2.4) app key, 'X' '1' u8 platform u32 app_build u8 vs_build u8 tlen 0, 'N' proto */
     put32(h + at, RELAY_APP_KEY);
     at += 4;
     h[at] = 'X', h[at + 1] = '1', h[at + 2] = RELAY_PLATFORM;
@@ -318,8 +331,17 @@ void net_poll(double now, int status, const char *name, const unsigned char *pro
     at += 9;
     h[at] = 'N', h[at + 1] = RELAY_PROTO;
     at += 2;
+    /* the game version (vroom.h): rooms of another version are not joined (an older relay stops
+     * reading at the 'N') */
+    h[at] = 'V', h[at + 1] = (unsigned char)vl;
+    memcpy(h + at + 2, VROOM_OWN, (size_t)vl);
+    at += 2 + vl;
   }
-  tx(h, at);
+  return at;
+}
+
+int net_relay_hello_encode(unsigned char *h, int cap, uint32_t id, int status, const char *name, const unsigned char *profile, int pl) {
+  return hello_encode(h, cap, id, status, name, profile, pl, 1);
 }
 
 void net_start(int ramp, int km, int song) {
@@ -503,6 +525,57 @@ static int zrle_decode(const unsigned char *in, int n, unsigned char *out, int w
   return o;
 }
 
+/* ROOMS: u8 count, per room u32 id, char name[16], u8 players, u8 max, u8 racing; then the
+ * trailers, each read only when complete and in this order: 'X' '1' (per room u8 vs_build, u32
+ * app_build, u8 platform, char host[16]), 'Q' '1' (per room u16 the host's rtt, u8 flags), 'V' '1'
+ * (per room u8 len, the game version); anything else ends the reading (a newer relay's) */
+int net_relay_rooms_parse(const unsigned char *p, int n, net_room *out, int max) {
+  if (n < 1 || max < 0) return -1;
+  int total = p[0], count = total > max ? max : total, at = 1;
+  for (int i = 0; i < total; ++i, at += 4 + NET_ROOM_NAME + 3) {
+    if (at + 4 + NET_ROOM_NAME + 3 > n) return -1;
+    if (i >= count) continue;
+    net_room *r = &out[i];
+    memset(r, 0, sizeof *r);
+    r->id = get32(p + at);
+    memcpy(r->name, p + at + 4, NET_ROOM_NAME);
+    r->players = p[at + 4 + NET_ROOM_NAME];
+    r->max = p[at + 5 + NET_ROOM_NAME];
+    r->racing = p[at + 6 + NET_ROOM_NAME];
+    r->host_rtt = -1;
+  }
+  if (at + 2 <= n && p[at] == 'X' && p[at + 1] == '1') {
+    at += 2;
+    for (int i = 0; i < total && at + 6 + NET_NAME <= n; ++i, at += 6 + NET_NAME) {
+      if (i >= count) continue;
+      net_room *r = &out[i];
+      r->has_ext = 1;
+      r->vs_build = p[at];
+      r->app_build = (int)get32(p + at + 1);
+      r->platform = p[at + 5];
+      memcpy(r->host, p + at + 6, NET_NAME);
+    }
+  }
+  if (at + 2 <= n && p[at] == 'Q' && p[at + 1] == '1') {
+    at += 2;
+    for (int i = 0; i < total && at + 3 <= n; ++i, at += 3)
+      if (i < count) {
+        int v = p[at] | p[at + 1] << 8;
+        out[i].host_rtt = v == 0xffff ? -1 : v;
+      }
+  }
+  if (at + 2 <= n && p[at] == 'V' && p[at + 1] == '1') {
+    at += 2;
+    for (int i = 0; i < total && at + 1 <= n; ++i) {
+      int len = p[at];
+      if (at + 1 + len > n) break; /* (cut short: the rest stay unknown) */
+      if (i < count) vroom_label_ok(p + at + 1, len, out[i].version);
+      at += 1 + len;
+    }
+  }
+  return count;
+}
+
 /* 1: the datagram was the relay's own (taken here); 0: the shared code reads it */
 static int relay_got(const unsigned char *b, int len, double now) {
   const unsigned char *p = b + 4;
@@ -539,46 +612,16 @@ static int relay_got(const unsigned char *b, int len, double now) {
       if (p[i] >= 32 && p[i] < 127) N.refused_msg[k++] = (char)p[i];
     N.refused_msg[k] = 0;
     if (!k) snprintf(N.refused_msg, sizeof N.refused_msg, "UPDATE REQUIRED: BUILD %u OR NEWER", (unsigned)get32(p + 1));
+    N.refused_reason = p[0] ? p[0] : 1;
     N.pend_kind = 0;
+    N.chosen = 0; /* (back to the room list: the HELLOs say browsing again, nothing auto-matched) */
     N.last_heard = now, N.heard = 1;
     return 1;
   }
-  case R_ROOMS: { /* u8 count, per room u32 id, char name[16], u8 players, u8 max, u8 racing; 'X' '1' ..; 'Q' '1' .. */
-    if (n < 1) return 1;
-    int total = p[0], count = total > NET_ROOMS_MAX ? NET_ROOMS_MAX : total, at = 1;
+  case R_ROOMS: { /* u8 count, per room ..; then the trailers (net_relay_rooms_parse) */
     net_room rooms[NET_ROOMS_MAX];
-    for (int i = 0; i < total; ++i, at += 4 + NET_ROOM_NAME + 3) {
-      if (at + 4 + NET_ROOM_NAME + 3 > n) return 1;
-      if (i >= count) continue;
-      net_room *r = &rooms[i];
-      memset(r, 0, sizeof *r);
-      r->id = get32(p + at);
-      memcpy(r->name, p + at + 4, NET_ROOM_NAME);
-      r->players = p[at + 4 + NET_ROOM_NAME];
-      r->max = p[at + 5 + NET_ROOM_NAME];
-      r->racing = p[at + 6 + NET_ROOM_NAME];
-      r->host_rtt = -1;
-    }
-    if (at + 2 <= n && p[at] == 'X' && p[at + 1] == '1') { /* per room u8 vs_build, u32 app_build, u8 platform, char host[16] */
-      at += 2;
-      for (int i = 0; i < total && at + 6 + NET_NAME <= n; ++i, at += 6 + NET_NAME) {
-        if (i >= count) continue;
-        net_room *r = &rooms[i];
-        r->has_ext = 1;
-        r->vs_build = p[at];
-        r->app_build = (int)get32(p + at + 1);
-        r->platform = p[at + 5];
-        memcpy(r->host, p + at + 6, NET_NAME);
-      }
-    }
-    if (at + 2 <= n && p[at] == 'Q' && p[at + 1] == '1') { /* per room u16 host's rtt, u8 flags */
-      at += 2;
-      for (int i = 0; i < total && at + 3 <= n; ++i, at += 3)
-        if (i < count) {
-          int v = p[at] | p[at + 1] << 8;
-          rooms[i].host_rtt = v == 0xffff ? -1 : v;
-        }
-    }
+    int count = net_relay_rooms_parse(p, n, rooms, NET_ROOMS_MAX);
+    if (count < 0) return 1;
     memcpy(N.rooms, rooms, sizeof rooms[0] * (size_t)count);
     N.nrooms = count;
     N.last_heard = now, N.heard = 1;
@@ -629,7 +672,7 @@ int net_is_relay(void) { return net_is_open() && N.relay; }
 
 static void relay_send_pending(void) {
   if (!net_is_relay() || !N.pend_kind) return;
-  unsigned char b[4 + 4 + 4 + NET_ROOM_NAME + 1 + NET_PROFILE];
+  unsigned char b[4 + 4 + 4 + NET_ROOM_NAME + 1 + NET_PROFILE + 2 + VROOM_LABEL_MAX];
   head(b, N.pend_kind);
   put32(b + 4, N.id);
   int at = 8;
@@ -637,7 +680,14 @@ static void relay_send_pending(void) {
   if (N.pend_kind == R_CREATE) memcpy(b + at, N.pend_name, NET_ROOM_NAME), at += NET_ROOM_NAME;
   b[at] = (unsigned char)N.plen;
   if (N.plen) memcpy(b + at + 1, N.profile, (size_t)N.plen);
-  tx(b, at + 1 + N.plen);
+  at += 1 + N.plen;
+  if (N.pend_kind == R_CREATE) { /* the room's game version (vroom.h; an older relay reads no further) */
+    int vl = (int)strlen(VROOM_OWN);
+    b[at] = 'V', b[at + 1] = (unsigned char)vl;
+    memcpy(b + at + 2, VROOM_OWN, (size_t)vl);
+    at += 2 + vl;
+  }
+  tx(b, at);
   N.pend_at = N.now;
 }
 
@@ -645,6 +695,7 @@ static void relay_choose(int kind, uint32_t room, const char *name) {
   if (!net_is_relay()) return;
   N.chosen = 1;
   N.refused_msg[0] = 0;
+  N.refused_reason = 0;
   N.pend_kind = kind;
   N.pend_room = room;
   memset(N.pend_name, 0, sizeof N.pend_name);
@@ -672,5 +723,7 @@ int net_relay_rooms(net_room *out, int max) {
 }
 
 const char *net_relay_refused(void) { return N.relay && N.refused_msg[0] ? N.refused_msg : NULL; }
+
+int net_relay_refused_reason(void) { return N.relay && N.refused_msg[0] ? N.refused_reason : 0; }
 
 int net_relay_rtt_ms(void) { return N.relay ? N.rtt_ms : -1; }

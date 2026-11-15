@@ -27,6 +27,7 @@
 #include "title.h"
 #include "pad.h"
 #include "lang.h" /* (v2.4) */
+#include "vroom.h" /* the online rooms by game version */
 
 /* Frame layout of the arcade's animations (found by stepping through them):
  * - menu_g_topbar_bar / menu_g_bottombar_bar: 0..159 idle, 160..170 slide out, 189..199 slide in.
@@ -10242,19 +10243,35 @@ enum { VS_KEYS = 12, VS_CONNECT = VS_KEYS, VS_RAMP_L, VS_RAMP_R, VS_KM_L, VS_KM_
 #define VS_ROW_H 54.0f
 
 /* (v2.4) the online relay's browse (vs.online 1, no room yet): under VS_KEYS the room rows
- * (0 .. MENU_RL_ROOMS - 1), QUICK MATCH, CREATE ROOM and REFRESH. Its words in one table (to
- * be localised) */
-enum { VS_RL_AUTO = MENU_RL_ROOMS, VS_RL_CREATE, VS_RL_REFRESH };
+ * (0 .. MENU_RL_ROOMS - 1), QUICK MATCH, CREATE ROOM and REFRESH; the version filter (ALL
+ * VERSIONS / this version's only) and, while CREATE ROOM's version pop-up is up (vs.rl_pick),
+ * its own version's button and CANCEL (vroom.h: the other versions are shown, disabled). Its
+ * words in one table (to be localised) */
+enum { VS_RL_AUTO = MENU_RL_ROOMS, VS_RL_CREATE, VS_RL_REFRESH, VS_RL_FILTER, VS_RL_PICK, VS_RL_PICK_CANCEL };
 enum { RLT_RELAY, RLT_PING, RLT_PING_NONE, RLT_AUTO, RLT_CREATE, RLT_LIST, RLT_REFRESH, RLT_EMPTY, RLT_RACING,
        RLT_WAITING, RLT_CONNECT, RLT_DISCONNECT, RLT_NOT_IN,
        /* the app's notes (menu_rl_refused, menu_rl_no_relay): the relay's REFUSED, no relay */
-       RLT_REFUSED, RLT_NO_RELAY, RLT_RELAY_SILENT, RLT_N };
+       RLT_REFUSED, RLT_NO_RELAY, RLT_RELAY_SILENT,
+       /* rooms by game version: a row of another version, the pop-up's title, note, this app's mark,
+        * CANCEL, a locked row's note, no room of this version */
+       RLT_LOCKED, RLT_PICK_TITLE, RLT_PICK_NOTE, RLT_THIS_APP, RLT_CANCEL, RLT_LOCKED_NOTE, RLT_EMPTY_OWN, RLT_N };
 static const char *const VS_RL_TEXT[RLT_N] = {
   "RELAY", "PING %d MS", "PING ---", "QUICK MATCH", "CREATE ROOM", "ROOM LIST", "REFRESH",
   "NO ROOMS YET - CREATE ONE", "RACING", "WAITING", "CONNECT TO RELAY", "DISCONNECT",
   "CONNECT TO SEE THE ROOMS",
   "REFUSED", "NO RELAY ANSWERING (NETWORK ON?)", "THE RELAY IS NOT ANSWERING",
+  "LOCKED", "CREATE ROOM - GAME VERSION", "ONLY PLAYERS ON THE SAME VERSION CAN JOIN", "(THIS APP)", "CANCEL",
+  "VERSION %s ROOM: ONLY %s PLAYERS CAN JOIN", "NO %s ROOMS YET - CREATE ONE",
 };
+/* the version pop-up's panel and its choice k's button (vroom_choice_at: 2 x 2), on the 1024 wide menu */
+#define VS_PICK_X 162.0f
+#define VS_PICK_Y 150.0f
+#define VS_PICK_W 700.0f
+#define VS_PICK_H 440.0f
+static void vs_pick_rect(int k, float r[4]) {
+  r[0] = VS_PICK_X + 40.0f + (float)(k % 2) * 320.0f, r[1] = VS_PICK_Y + 128.0f + (float)(k / 2) * 112.0f;
+  r[2] = 300.0f, r[3] = 96.0f;
+}
 const char *menu_rl_no_relay(int silent) { return VS_RL_TEXT[silent ? RLT_RELAY_SILENT : RLT_NO_RELAY]; }
 /* the relay's REFUSED (its own words, in capitals as the 5x7 text has them) */
 const char *menu_rl_refused(const char *why) {
@@ -10274,7 +10291,10 @@ static void vs_button(const menu_state *m, int b, float r[4]) {
     if (b < MENU_RL_ROOMS) r[0] = VS_LEFT, r[1] = 268.0f + (float)b * 58.0f, r[2] = 410.0f, r[3] = 52.0f;
     else if (b == VS_RL_AUTO) r[0] = VS_LEFT, r[1] = 176.0f, r[2] = 200.0f, r[3] = 52.0f;
     else if (b == VS_RL_CREATE) r[0] = VS_LEFT + 210.0f, r[1] = 176.0f, r[2] = 200.0f, r[3] = 52.0f;
-    else r[0] = VS_LEFT + 410.0f - 130.0f, r[1] = 238.0f, r[2] = 130.0f, r[3] = 24.0f; /* REFRESH */
+    else if (b == VS_RL_REFRESH) r[0] = VS_LEFT + 148.0f, r[1] = 238.0f, r[2] = 100.0f, r[3] = 24.0f;
+    else if (b == VS_RL_FILTER) r[0] = VS_LEFT + 256.0f, r[1] = 238.0f, r[2] = 154.0f, r[3] = 24.0f;
+    else if (b == VS_RL_PICK) vs_pick_rect(vroom_choice_own(VROOM_OWN), r);
+    else r[0] = VS_PICK_X + 0.5f * (VS_PICK_W - 240.0f), r[1] = VS_PICK_Y + VS_PICK_H - 84.0f, r[2] = 240.0f, r[3] = 56.0f; /* CANCEL */
     return;
   }
   if (b < VS_KEYS && m->vs.kind != MENU_VS_NET) {
@@ -10321,7 +10341,10 @@ static int vs_hit(const menu_state *m, float x, float y) {
     if (b < VS_KEYS && m->vs.state != MENU_VS_OFF) continue;
     if (b < VS_KEYS && m->vs.kind != MENU_VS_NET && b >= m->vs.n_found) continue;
     /* (v2.4) the relay's browse: its buttons once at the relay, a room row with a room */
-    if (b < VS_KEYS && vs_rl(m) && (!m->vs.rl_in || b > VS_RL_REFRESH || (b < MENU_RL_ROOMS && b >= m->vs.rl_n))) continue;
+    if (b < VS_KEYS && vs_rl(m) && (!m->vs.rl_in || b > VS_RL_PICK_CANCEL || (b < MENU_RL_ROOMS && b >= m->vs.rl_n))) continue;
+    /* (the version pop-up: its buttons alone while it is up, never while it is not) */
+    if (vs_rl(m) && m->vs.rl_in && m->vs.rl_pick != (b == VS_RL_PICK || b == VS_RL_PICK_CANCEL)) continue;
+    if (b == VS_RL_PICK && vroom_choice_own(VROOM_OWN) < 0) continue;
     if (b == VS_GHOST) {
       if (!vs_swap_on(m)) continue;
     } else if (b == VS_ROOM) { /* (v2.3: any player's, a v2.3 host's room) */
@@ -10344,6 +10367,12 @@ static void vs_step(menu_state *m, int back) {
   int tap = m->vs.tap;
   m->vs.tap = 0;
   if (m->vs.state >= MENU_VS_LOADING) return; /* the race is on its way */
+  if (back && m->vs.rl_pick) { /* (the version pop-up's back: CANCEL) */
+    m->vs.rl_pick = 0;
+    snd_menu(SND_CANCEL);
+    return;
+  }
+  if (!vs_rl(m)) m->vs.rl_pick = 0;
   if (back) {
     snd_menu(SND_CANCEL);
     /* a LAN host's game stays up (v2.2: the player plays on, 乱入 taken or not, menu_intrude);
@@ -10361,8 +10390,31 @@ static void vs_step(menu_state *m, int back) {
   if (b < 0) return;
   size_t len = strlen(m->vs.ip);
   if (b < VS_KEYS && vs_rl(m)) {
-    /* (v2.4) the relay's browse: the app does the asking */
-    m->vs.rl_ask = b < MENU_RL_ROOMS ? MENU_RL_JOIN + b : b == VS_RL_AUTO ? MENU_RL_AUTO : b == VS_RL_CREATE ? MENU_RL_CREATE : MENU_RL_LIST;
+    /* (v2.4) the relay's browse: the app does the asking. CREATE ROOM first asks the room's game
+     * version (the pop-up: this app's own is the one that can be picked); a room of another
+     * version is not joined (its row says why); the filter shows all versions or this one's */
+    if (b < MENU_RL_ROOMS && m->vs.rl_lock[b]) {
+      snprintf(m->vs.note, sizeof m->vs.note, VS_RL_TEXT[RLT_LOCKED_NOTE], m->vs.rl_ver[b], m->vs.rl_ver[b]);
+      snd_menu(SND_CANCEL);
+      return;
+    }
+    if (b == VS_RL_CREATE) {
+      m->vs.rl_pick = 1;
+      snd_menu(SND_SELECT);
+      return;
+    }
+    if (b == VS_RL_PICK_CANCEL) {
+      m->vs.rl_pick = 0;
+      snd_menu(SND_CANCEL);
+      return;
+    }
+    if (b == VS_RL_FILTER) {
+      m->vs.rl_only_own = !m->vs.rl_only_own;
+      snd_menu(SND_CURSOR);
+      return;
+    }
+    m->vs.rl_pick = 0;
+    m->vs.rl_ask = b < MENU_RL_ROOMS ? MENU_RL_JOIN + b : b == VS_RL_AUTO ? MENU_RL_AUTO : b == VS_RL_PICK ? MENU_RL_CREATE : MENU_RL_LIST;
     snd_menu(b == VS_RL_REFRESH ? SND_CURSOR : SND_SELECT);
   } else if (b < VS_KEYS && m->vs.kind != MENU_VS_NET) {
     /* a game found nearby: join it */
@@ -10472,6 +10524,52 @@ static void draw_vs_loading(const menu_state *m, int clock, float screen_w, floa
 
 #include "v24/vsset.inc" /* (v2.4) the versus' SETTINGS (MENU_VS_SET) */
 
+/* CREATE ROOM's game version pop-up (vroom.h): the screen dimmed, a panel with its title bar, the
+ * note, the versions 2 x 2 (this app's own highlighted orange and the one that can be picked,
+ * the others shown disabled: they are other apps' versions), CANCEL */
+static void vs_draw_pick(const menu_state *m, float screen_w, float screen_h) {
+  const float O[3] = { 1.0f, 0.55f, 0.1f };
+  float r[4];
+  hud_ui_begin(screen_w, screen_h);
+  hud_ui_rect(-200, 0, screen_w + 400, screen_h, 0, 0, 0, 0.55f);
+  hud_ui_rect(VS_PICK_X - 3, VS_PICK_Y - 3, VS_PICK_W + 6, VS_PICK_H + 6, 0.1f, 0.1f, 0.1f, 0.95f);
+  hud_ui_rect(VS_PICK_X, VS_PICK_Y, VS_PICK_W, VS_PICK_H, 0.72f, 0.72f, 0.74f, 0.97f);
+  hud_ui_rect(VS_PICK_X, VS_PICK_Y, VS_PICK_W, 64, 0.17f, 0.17f, 0.19f, 1);
+  hud_ui_rect(VS_PICK_X + 12, VS_PICK_Y + 60, VS_PICK_W - 24, 2, 0.8f, 0.8f, 0.8f, 0.9f);
+  const float tr[4] = { VS_PICK_X, VS_PICK_Y, VS_PICK_W, 64 };
+  vs_centred(VS_RL_TEXT[RLT_PICK_TITLE], tr, 4.0f, 1, 1, 1, 1);
+  const float nr[4] = { VS_PICK_X, VS_PICK_Y + 76, VS_PICK_W, 36 };
+  vs_centred(VS_RL_TEXT[RLT_PICK_NOTE], nr, 2.2f, 0.15f, 0.15f, 0.15f, 0.9f);
+  int own = vroom_choice_own(VROOM_OWN);
+  for (int k = 0; k < VROOM_CHOICES; ++k) {
+    const vroom_choice *c = vroom_choice_at(k);
+    int on = vroom_choice_enabled(k, VROOM_OWN);
+    vs_pick_rect(k, r);
+    hud_ui_button(r[0], r[1], r[2], r[3], on && m->vs.held == VS_RL_PICK + 1);
+    if (k == own) { /* (an orange frame round it) */
+      hud_ui_rect(r[0] - 6, r[1] - 6, r[2] + 12, 4, O[0], O[1], O[2], 1);
+      hud_ui_rect(r[0] - 6, r[1] + r[3] + 2, r[2] + 12, 4, O[0], O[1], O[2], 1);
+      hud_ui_rect(r[0] - 6, r[1] - 2, 4, r[3] + 4, O[0], O[1], O[2], 1);
+      hud_ui_rect(r[0] + r[2] + 2, r[1] - 2, 4, r[3] + 4, O[0], O[1], O[2], 1);
+    }
+    char sub[48];
+    if (k == own) snprintf(sub, sizeof sub, "%s%s%s", c->sub, c->sub[0] ? " " : "", VS_RL_TEXT[RLT_THIS_APP]);
+    else snprintf(sub, sizeof sub, "%s", c->sub);
+    const float big[4] = { r[0], r[1] + (sub[0] ? 8.0f : 0.0f), r[2], sub[0] ? 56.0f : r[3] };
+    vs_centred(c->label, big, 6.0f, 1, 1, 1, on ? 1.0f : 0.5f);
+    if (sub[0]) {
+      const float sr[4] = { r[0], r[1] + 62, r[2], 24 };
+      float sp = fminf(2.2f, (r[2] - 16.0f) / hud_ui_text_width(sub, 1.0f));
+      vs_centred(sub, sr, sp, 1, 0.82f, 0.45f, on ? 1.0f : 0.5f);
+    }
+    if (!on) hud_ui_rect(r[0], r[1], r[2], r[3], 0.45f, 0.45f, 0.47f, 0.45f); /* (disabled) */
+  }
+  vs_button(m, VS_RL_PICK_CANCEL, r);
+  hud_ui_button(r[0], r[1], r[2], r[3], m->vs.held == VS_RL_PICK_CANCEL + 1);
+  vs_centred(VS_RL_TEXT[RLT_CANCEL], r, 4.0f, 1, 1, 1, 0.95f);
+  hud_ui_end();
+}
+
 static void draw_vs(const menu_state *m, int clock, int bars, float screen_w, float screen_h) {
   if (m->vs.state == MENU_VS_LOADING) {
     draw_vs_loading(m, clock, screen_w, screen_h);
@@ -10504,17 +10602,41 @@ static void draw_vs(const menu_state *m, int clock, int bars, float screen_w, fl
       hud_ui_text(VS_RL_TEXT[RLT_NOT_IN], VS_LEFT + 16, 196, 2.2f, 1, 1, 1, 0.5f);
     } else if (off) {
       static const int TXT[3] = { RLT_AUTO, RLT_CREATE, RLT_REFRESH };
-      for (int b = VS_RL_AUTO; b <= VS_RL_REFRESH; ++b) {
+      for (int b = VS_RL_AUTO; b <= VS_RL_FILTER; ++b) {
         vs_button(m, b, r);
         hud_ui_button(r[0], r[1], r[2], r[3], m->vs.held == b + 1);
+        if (b == VS_RL_FILTER) { /* the version filter, orange when it narrows the list */
+          const char *f = vroom_filter_text(m->vs.rl_only_own, VROOM_OWN);
+          float fp = fminf(2.0f, (r[2] - 12.0f) / hud_ui_text_width(f, 1.0f));
+          vs_centred(f, r, fp, 1, m->vs.rl_only_own ? 0.75f : 1, m->vs.rl_only_own ? 0.3f : 1, 0.95f);
+          continue;
+        }
         vs_centred(VS_RL_TEXT[TXT[b - VS_RL_AUTO]], r, b == VS_RL_REFRESH ? 2.0f : 3.0f, 1, 1, 1, 0.95f);
       }
       vs_label(VS_RL_TEXT[RLT_LIST], VS_LEFT, 242, 2.5f, 0.85f);
       for (int b = 0; b < MENU_RL_ROOMS; ++b) {
         vs_button(m, b, r);
         if (b < m->vs.rl_n) {
-          hud_ui_button(r[0], r[1], r[2], r[3], m->vs.held == b + 1);
-          hud_ui_text(m->vs.rl_room[b], r[0] + 16, r[1] + 8, 2.8f, 1, 1, 1, 0.95f);
+          int lock = m->vs.rl_lock[b];
+          hud_ui_button(r[0], r[1], r[2], r[3], m->vs.held == b + 1 && !lock);
+          /* the room's game version chip (orange: this app's own, grey: another's), then its name */
+          float nx = r[0] + 16;
+          if (m->vs.rl_ver[b][0]) {
+            const char *chip = vroom_chip(m->vs.rl_ver[b], 0);
+            float cw = hud_ui_text_width(chip, 2.0f) + 16.0f;
+            if (lock) hud_ui_rect(r[0] + 8, r[1] + 6, cw, 22, 0.25f, 0.25f, 0.25f, 0.9f);
+            else hud_ui_rect(r[0] + 8, r[1] + 6, cw, 22, O[0] * 0.75f, O[1] * 0.75f, O[2] * 0.75f, 0.95f);
+            hud_ui_text(chip, r[0] + 16, r[1] + 10, 2.0f, 1, 1, 1, lock ? 0.6f : 0.95f);
+            nx = r[0] + 8 + cw + 10;
+          }
+          hud_ui_text(m->vs.rl_room[b], nx, r[1] + 8, 2.8f, 1, 1, 1, lock ? 0.45f : 0.95f);
+          if (lock) { /* another version's room: greyed, LOCKED in place of its places */
+            hud_ui_rect(r[0], r[1], r[2], r[3], 0.55f, 0.55f, 0.55f, 0.45f);
+            hud_ui_text(VS_RL_TEXT[RLT_LOCKED], r[0] + 16, r[1] + 32, 2.0f, 1, 1, 1, 0.75f);
+            snprintf(s, sizeof s, "%s", vroom_chip(m->vs.rl_ver[b], 1));
+            hud_ui_text(s, r[0] + r[2] - 12 - hud_ui_text_width(s, 2.0f), r[1] + 32, 2.0f, 1, 1, 1, 0.6f);
+            continue;
+          }
           int full = m->vs.rl_players[b] >= m->vs.rl_max[b] && m->vs.rl_max[b] > 0;
           snprintf(s, sizeof s, "%d/%d", m->vs.rl_players[b], m->vs.rl_max[b]);
           hud_ui_text(s, r[0] + 16, r[1] + 32, 2.0f, full ? 1.0f : 0.8f, full ? 0.4f : 0.85f, full ? 0.4f : 0.95f, 0.9f);
@@ -10525,7 +10647,11 @@ static void draw_vs(const menu_state *m, int clock, int bars, float screen_w, fl
           hud_ui_text(s, r[0] + r[2] - 12 - hud_ui_text_width(s, 2.0f), r[1] + 32, 2.0f, 1, 1, 1, 0.7f);
         } else {
           hud_ui_rect(r[0], r[1], r[2], r[3], 0, 0, 0, 0.3f);
-          if (b == m->vs.rl_n && !b) hud_ui_text(VS_RL_TEXT[RLT_EMPTY], r[0] + 16, r[1] + 19, 2.2f, 1, 1, 1, 0.45f);
+          if (b == m->vs.rl_n && !b) {
+            if (m->vs.rl_only_own) snprintf(s, sizeof s, VS_RL_TEXT[RLT_EMPTY_OWN], VROOM_OWN);
+            else snprintf(s, sizeof s, "%s", VS_RL_TEXT[RLT_EMPTY]);
+            hud_ui_text(s, r[0] + 16, r[1] + 19, 2.2f, 1, 1, 1, 0.45f);
+          }
         }
       }
     }
@@ -10723,6 +10849,7 @@ static void draw_vs(const menu_state *m, int clock, int bars, float screen_w, fl
       x += VS_GLYPH_W * k;
     }
   }
+  if (vs_rl(m) && m->vs.rl_in && m->vs.rl_pick) vs_draw_pick(m, screen_w, screen_h);
   hud_draw_menu_keys(screen_w, screen_h, m->key_held, 0, 1);
   vsset_draw_gear(m, screen_w, screen_h); /* (v2.4) SETTINGS */
   anm_fill(0, 0, 0, 1.0f - fade);

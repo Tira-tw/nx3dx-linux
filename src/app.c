@@ -40,6 +40,7 @@
 #include "gk.h"
 #include "ghostx.h"
 #include "net.h"
+#include "vroom.h"
 #include "vs_host.h"
 #include "render.h"
 #include "sound.h"
@@ -4635,17 +4636,32 @@ static void vs_relay_browse(double now, const char *name) {
   static net_room rooms[MENU_RL_ROOMS];
   int ask = m->vs.rl_ask;
   m->vs.rl_ask = 0;
+  /* the relay heard while browsing too: the HELLOs (browsing, 250), its ROOMS and PONGs (nothing
+   * polled the connection before a room was chosen: no room list, PING ---) */
+  unsigned char profile[VS_PROFILE];
+  vs_profile(profile);
+  net_poll(now, 0, name, profile, VS_PROFILE);
   m->vs.rl_ping = net_relay_rtt_ms();
   if (ask == MENU_RL_LIST || now - listed > 3.0) {
     net_relay_list();
     listed = now;
   }
-  int n = net_relay_rooms(rooms, MENU_RL_ROOMS);
-  m->vs.rl_n = n < 0 ? 0 : n;
-  for (int i = 0; i < m->vs.rl_n; ++i) {
+  /* (rooms by game version, vroom.h) this version's rooms first, the others locked after them,
+   * or left out by the screen's filter; rooms[] is kept in the rows' order (a row's JOIN) */
+  static net_room all[NET_ROOMS_MAX];
+  int na = net_relay_rooms(all, NET_ROOMS_MAX);
+  const char *labels[NET_ROOMS_MAX];
+  int idx[MENU_RL_ROOMS];
+  for (int i = 0; i < na; ++i) labels[i] = all[i].version;
+  int n = vroom_rows(labels, na < 0 ? 0 : na, m->vs.rl_only_own, VROOM_OWN, idx, MENU_RL_ROOMS);
+  m->vs.rl_n = n;
+  for (int i = 0; i < n; ++i) {
+    rooms[i] = all[idx[i]];
     snprintf(m->vs.rl_room[i], sizeof m->vs.rl_room[i], "%s", rooms[i].name);
     m->vs.rl_players[i] = rooms[i].players, m->vs.rl_max[i] = rooms[i].max;
     m->vs.rl_racing[i] = rooms[i].racing, m->vs.rl_rtt[i] = rooms[i].host_rtt;
+    snprintf(m->vs.rl_ver[i], sizeof m->vs.rl_ver[i], "%s", rooms[i].version);
+    m->vs.rl_lock[i] = vroom_locked(rooms[i].version, VROOM_OWN);
   }
   const char *why = net_relay_refused();
   if (why) snprintf(m->vs.note, sizeof m->vs.note, "%s", menu_rl_refused(why));
@@ -4658,7 +4674,7 @@ static void vs_relay_browse(double now, const char *name) {
     net_relay_create(name);
   } else {
     int k = ask - MENU_RL_JOIN;
-    if (k < 0 || k >= m->vs.rl_n) return;
+    if (k < 0 || k >= m->vs.rl_n || m->vs.rl_lock[k]) return; /* (another version's room: not joined) */
     net_relay_join(rooms[k].id);
   }
   m->vs.state = MENU_VS_CONNECTING;
